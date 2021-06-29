@@ -4,53 +4,13 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Concurrent;
+using System.Net.WebSockets;
+using System.Text;
 using System.Threading;
 
 namespace Serilog
 {
-    public static class JackSerilogExtens
-    {
-
-        static IConfiguration Configuration;
-        static ILoggingBuilder LoggingBuilder;
-        static void ConfigurationChangeCallback(object p)
-        {
-            Configuration.GetReloadToken().RegisterChangeCallback(ConfigurationChangeCallback, null);
-
-            string minimumLevel = Configuration["Serilog:MinimumLevel:Default"];
-            var level = (LogLevel)Enum.Parse<Serilog.Events.LogEventLevel>(minimumLevel);
-            LoggingBuilder.SetMinimumLevel(level);
-        }
-
-        /// <summary>
-        /// 使用Serilog异步日志
-        /// </summary>
-        /// <param name="builder"></param>
-        /// <param name="configuration"></param>
-        public static void UseSerilogAsyncLogger(this ILoggingBuilder builder, IConfiguration configuration)
-        {
-            Configuration = configuration;
-
-            LoggingBuilder = builder;
-            ConfigurationChangeCallback(null);
-
-            builder.AddProvider(new AsyncLoggerProvider());
-        }
-
-        /// <summary>
-        /// 使用Serilog异步日志
-        /// </summary>
-        /// <param name="builder"></param>
-        /// <returns></returns>
-        public static IHostBuilder UseSerilogAsyncLogger(this IHostBuilder builder)
-        {
-            builder.ConfigureServices(services => {
-                services.AddSingleton<ILoggerFactory, AsyncLoggerFactory>();
-            });
-            return builder;
-        }
-    }
-
+   
     struct MessageItem
     {
         public Serilog.ILogger Logger;
@@ -62,6 +22,7 @@ namespace Serilog
 
     class QueueLogger : Microsoft.Extensions.Logging.ILogger
     {
+        public static ConcurrentDictionary<WebSocket, bool> WebSocketList = new ConcurrentDictionary<WebSocket, bool>();
         static ConcurrentQueue<MessageItem> Queue = new ConcurrentQueue<MessageItem>();
         static AutoResetEvent WaitEvent = new AutoResetEvent(false);
         string _categoryName;
@@ -75,13 +36,28 @@ namespace Serilog
                     if (Queue.TryDequeue(out MessageItem item))
                     {
                         var level = (Serilog.Events.LogEventLevel)item.Level;
+                        string msg;
                         if (item.Exception != null)
                         {
-                            item.Logger.Write(level, $"{item.Time.ToString("HH:mm:ss")} {item.Message}\r\n{item.Exception}");
+                            msg = $"{item.Time.ToString("HH:mm:ss")} {item.Message}\r\n{item.Exception}";
                         }
                         else
                         {
-                            item.Logger.Write(level, $"{item.Time.ToString("HH:mm:ss")} {item.Message}");
+                            msg = $"{item.Time.ToString("HH:mm:ss")} {item.Message}";
+                        }
+                        item.Logger.Write(level, msg);
+                        if(WebSocketList.Count > 0)
+                        {
+                            foreach( var socket in WebSocketList )
+                            {
+                                try
+                                {
+                                    socket.Key.SendAsync(new ArraySegment<byte>(Encoding.UTF8.GetBytes(msg)), WebSocketMessageType.Text, true, CancellationToken.None);
+                                }
+                                catch 
+                                {
+                                }
+                            }
                         }
                     }
                     else
@@ -112,7 +88,6 @@ namespace Serilog
         {
             if (IsEnabled(logLevel))
             {
-                var msg = formatter(state, exception);
                 Queue.Enqueue(new MessageItem
                 {
                     Level = logLevel,
