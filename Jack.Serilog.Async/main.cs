@@ -22,7 +22,7 @@ namespace Serilog
 
     class QueueLogger : Microsoft.Extensions.Logging.ILogger
     {
-        public static ConcurrentDictionary<WebSocket, bool> WebSocketList = new ConcurrentDictionary<WebSocket, bool>();
+
         static ConcurrentQueue<MessageItem> Queue = new ConcurrentQueue<MessageItem>();
         static AutoResetEvent WaitEvent = new AutoResetEvent(false);
         string _categoryName;
@@ -46,19 +46,7 @@ namespace Serilog
                             msg = $"{item.Time.ToString("HH:mm:ss")} {item.Message}";
                         }
                         item.Logger.Write(level, msg);
-                        if(WebSocketList.Count > 0)
-                        {
-                            foreach( var socket in WebSocketList )
-                            {
-                                try
-                                {
-                                    socket.Key.SendAsync(new ArraySegment<byte>(Encoding.UTF8.GetBytes(msg)), WebSocketMessageType.Text, true, CancellationToken.None);
-                                }
-                                catch 
-                                {
-                                }
-                            }
-                        }
+
                     }
                     else
                     {
